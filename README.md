@@ -72,6 +72,8 @@ kubectl get secret -n monitoring kube-prometheus-stack-grafana \
 
 - Traefik backend names appear as `exported_service` in Prometheus (not `service`) because of Kubernetes label collision during scrape.
 - Dashboards may show no data until Traefik receives traffic and Prometheus completes at least one scrape (~30s).
+- **Total Requests / Total Errors** use cumulative Prometheus counters (same source as Traefik metrics), so they match `kubectl logs ... | grep 503 | wc -l` on the current Traefik pod. Do not use `increase()` for these — it under-counts burst errors between scrapes.
+- Filter **Backend Service** to `default-roboshop-frontend-8080@kubernetes` for payment/API errors routed through the frontend ingress.
 - Idempotent: safe to run `./deploy.sh` multiple times.
 
 ## Troubleshooting

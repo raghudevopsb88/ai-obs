@@ -102,6 +102,7 @@ def stat_panel(
     unit: str = "short",
     thresholds: list | None = None,
     decimals: int | None = None,
+    instant: bool = False,
 ) -> dict:
     steps = thresholds or [{"color": "green", "value": None}]
     defaults: dict = {
@@ -129,7 +130,7 @@ def stat_panel(
             "justifyMode": "auto",
             "textMode": "auto",
         },
-        "targets": [prom_target(expr, instant=False)],
+        "targets": [prom_target(expr, instant=instant)],
     }
 
 
@@ -218,19 +219,39 @@ def upsert_dashboard(dashboard: dict) -> None:
 def build_traefik_dashboard() -> dict:
     svc = 'exported_service=~"$service"'
     ep = 'entrypoint=~"$entrypoint"'
+    err = f'{svc},code=~"4..|5.."'
+
+    # Cumulative counters match `kubectl logs ... | grep 503 | wc -l` on the current Traefik pod.
+    # increase() under-counts burst errors (~50%) due to Prometheus scrape extrapolation.
+    req_total = f"sum(traefik_service_requests_total{{{svc}}})"
+    err_total = f"sum(traefik_service_requests_total{{{err}}})"
+    req_delta = (
+        f"sum(max_over_time(traefik_service_requests_total{{{svc}}}[5m]) "
+        f"- min_over_time(traefik_service_requests_total{{{svc}}}[5m]))"
+    )
+    err_delta = (
+        f"sum by (code) (max_over_time(traefik_service_requests_total{{{err}}}[5m]) "
+        f"- min_over_time(traefik_service_requests_total{{{err}}}[5m]))"
+    )
+    req_delta_by_code = (
+        f"sum by (code) (max_over_time(traefik_service_requests_total{{{svc}}}[5m]) "
+        f"- min_over_time(traefik_service_requests_total{{{svc}}}[5m]))"
+    )
+    status_pie = (
+        f"sum by (code) (max_over_time(traefik_service_requests_total{{{svc}}}[$__range]) "
+        f"- min_over_time(traefik_service_requests_total{{{svc}}}[$__range]))"
+    )
 
     panels = [
         stat_panel(1, "Request Rate", {"x": 0, "y": 0, "w": 4, "h": 4},
                    f"sum(rate(traefik_service_requests_total{{{svc}}}[5m]))", unit="reqps"),
         stat_panel(2, "Total Requests", {"x": 4, "y": 0, "w": 4, "h": 4},
-                   f"round(sum(increase(traefik_service_requests_total{{{svc}}}[$__range])))",
-                   unit="none", decimals=0),
+                   req_total, unit="none", decimals=0, instant=True),
         stat_panel(3, "Error Rate (4xx/5xx)", {"x": 8, "y": 0, "w": 4, "h": 4},
-                   f'sum(rate(traefik_service_requests_total{{{svc},code=~"4..|5.."}}[5m]))', unit="reqps",
+                   f"sum(rate(traefik_service_requests_total{{{err}}}[5m]))", unit="reqps",
                    thresholds=[{"color": "green", "value": None}, {"color": "yellow", "value": 1}, {"color": "red", "value": 10}]),
         stat_panel(4, "Total Errors", {"x": 12, "y": 0, "w": 4, "h": 4},
-                   f'round(sum(increase(traefik_service_requests_total{{{svc},code=~"4..|5.."}}[$__range])))',
-                   unit="none", decimals=0,
+                   err_total, unit="none", decimals=0, instant=True,
                    thresholds=[{"color": "green", "value": None}, {"color": "yellow", "value": 1}, {"color": "red", "value": 10}]),
         stat_panel(5, "P95 Latency", {"x": 16, "y": 0, "w": 4, "h": 4},
                    f"histogram_quantile(0.95, sum by (le) (rate(traefik_service_request_duration_seconds_bucket{{{svc}}}[5m])))", unit="s"),
@@ -239,13 +260,11 @@ def build_traefik_dashboard() -> dict:
         ts_panel(7, "Request Rate Over Time", {"x": 0, "y": 4, "w": 12, "h": 8},
                  [prom_target(f"sum(rate(traefik_service_requests_total{{{svc}}}[5m]))", "req/s")], unit="reqps"),
         ts_panel(8, "Request Count Over Time", {"x": 12, "y": 4, "w": 12, "h": 8},
-                 [prom_target(f"round(sum(increase(traefik_service_requests_total{{{svc}}}[5m])))", "requests / 5m")],
-                 unit="none", decimals=0),
+                 [prom_target(req_delta, "requests / 5m")], unit="none", decimals=0),
         ts_panel(9, "Request Rate by Status Code", {"x": 0, "y": 12, "w": 12, "h": 8},
                  [prom_target(f"sum by (code) (rate(traefik_service_requests_total{{{svc}}}[5m]))", "{{code}}")], unit="reqps", stack=True),
         ts_panel(10, "Request Count by Status Code", {"x": 12, "y": 12, "w": 12, "h": 8},
-                  [prom_target(f"round(sum by (code) (increase(traefik_service_requests_total{{{svc}}}[5m])))", "{{code}}")],
-                  unit="none", decimals=0, stack=True),
+                  [prom_target(req_delta_by_code, "{{code}}")], unit="none", decimals=0, stack=True),
         ts_panel(11, "Latency Percentiles", {"x": 0, "y": 20, "w": 12, "h": 8}, [
             prom_target(f"histogram_quantile(0.50, sum by (le) (rate(traefik_service_request_duration_seconds_bucket{{{svc}}}[5m])))", "p50", ref="A"),
             prom_target(f"histogram_quantile(0.95, sum by (le) (rate(traefik_service_request_duration_seconds_bucket{{{svc}}}[5m])))", "p95", ref="B"),
@@ -256,12 +275,11 @@ def build_traefik_dashboard() -> dict:
             prom_target(f"sum(rate(traefik_service_responses_bytes_total{{{svc}}}[5m]))", "response B/s", ref="B"),
         ], unit="Bps"),
         ts_panel(13, "Error Rate Over Time", {"x": 0, "y": 28, "w": 12, "h": 8},
-                 [prom_target(f'sum by (code) (rate(traefik_service_requests_total{{{svc},code=~"4..|5.."}}[5m]))', "{{code}}")], unit="reqps", stack=True),
+                 [prom_target(f'sum by (code) (rate(traefik_service_requests_total{{{err}}}[5m]))', "{{code}}")], unit="reqps", stack=True),
         ts_panel(14, "Error Count Over Time", {"x": 12, "y": 28, "w": 12, "h": 8},
-                  [prom_target(f'round(sum by (code) (increase(traefik_service_requests_total{{{svc},code=~"4..|5.."}}[5m])))', "{{code}}")],
-                  unit="none", decimals=0, stack=True),
+                  [prom_target(err_delta, "{{code}}")], unit="none", decimals=0, stack=True),
         pie_panel(15, "Status Code Distribution", {"x": 0, "y": 36, "w": 12, "h": 8},
-                  f"round(sum by (code) (increase(traefik_service_requests_total{{{svc}}}[$__range])))", legend="{{code}}"),
+                  status_pie, legend="{{code}}"),
         ts_panel(16, "Entrypoint Request Rate", {"x": 12, "y": 36, "w": 12, "h": 8},
                  [prom_target(f"sum by (entrypoint) (rate(traefik_entrypoint_requests_total{{{ep}}}[5m]))", "{{entrypoint}}")], unit="reqps"),
         ts_panel(17, "Entrypoint P95 Latency", {"x": 0, "y": 44, "w": 12, "h": 8},
@@ -285,7 +303,11 @@ def build_traefik_dashboard() -> dict:
         "version": 1,
         "refresh": "30s",
         "time": {"from": "now-1h", "to": "now"},
-        "description": "Traefik ingress metrics. Use Backend Service dropdown to filter by routed service.",
+        "description": (
+            "Traefik ingress metrics. Use Backend Service dropdown to filter by routed service. "
+            "Total Requests / Total Errors are cumulative counters since the Traefik pod last restarted "
+            "(matches traefik access log line counts). Rate panels use per-second averages."
+        ),
         "panels": panels,
         "templating": {"list": variables},
         "annotations": {"list": []},
