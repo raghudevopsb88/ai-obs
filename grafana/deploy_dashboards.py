@@ -318,35 +318,120 @@ def build_traefik_dashboard() -> dict:
 def build_roboshop_dashboard() -> dict:
     dep = 'deployment=~"$deployment"'
     pod = 'pod=~"${deployment}-.*"'
+    ns = ROBOSHOP_NS
+    ctr = 'container!="", container!="POD"'
+
+    cpu_usage_by_pod = (
+        f'sum by (pod) (rate(container_cpu_usage_seconds_total{{namespace="{ns}", {pod}, {ctr}}}[5m]))'
+    )
+    cpu_req_by_pod = (
+        f'sum by (pod) (kube_pod_container_resource_requests{{namespace="{ns}", {pod}, resource="cpu", container!=""}})'
+    )
+    cpu_lim_by_pod = (
+        f'sum by (pod) (kube_pod_container_resource_limits{{namespace="{ns}", {pod}, resource="cpu", container!=""}})'
+    )
+    mem_usage_by_pod = (
+        f'sum by (pod) (container_memory_working_set_bytes{{namespace="{ns}", {pod}, {ctr}}})'
+    )
+    mem_req_by_pod = (
+        f'sum by (pod) (kube_pod_container_resource_requests{{namespace="{ns}", {pod}, resource="memory", container!=""}})'
+    )
+    mem_lim_by_pod = (
+        f'sum by (pod) (kube_pod_container_resource_limits{{namespace="{ns}", {pod}, resource="memory", container!=""}})'
+    )
+
+    cpu_usage_sum = f'sum(rate(container_cpu_usage_seconds_total{{namespace="{ns}", {pod}, {ctr}}}[5m]))'
+    cpu_req_sum = f'sum(kube_pod_container_resource_requests{{namespace="{ns}", {pod}, resource="cpu", container!=""}})'
+    cpu_lim_sum = f'sum(kube_pod_container_resource_limits{{namespace="{ns}", {pod}, resource="cpu", container!=""}})'
+    mem_usage_sum = f'sum(container_memory_working_set_bytes{{namespace="{ns}", {pod}, {ctr}}})'
+    mem_req_sum = f'sum(kube_pod_container_resource_requests{{namespace="{ns}", {pod}, resource="memory", container!=""}})'
+    mem_lim_sum = f'sum(kube_pod_container_resource_limits{{namespace="{ns}", {pod}, resource="memory", container!=""}})'
+
+    cpu_pct_req = f"100 * {cpu_usage_sum} / {cpu_req_sum}"
+    cpu_pct_lim = f"100 * {cpu_usage_sum} / {cpu_lim_sum}"
+    mem_pct_req = f"100 * {mem_usage_sum} / {mem_req_sum}"
+    mem_pct_lim = f"100 * {mem_usage_sum} / {mem_lim_sum}"
+
+    cpu_pct_req_by_pod = f"100 * ({cpu_usage_by_pod}) / ({cpu_req_by_pod})"
+    cpu_pct_lim_by_pod = f"100 * ({cpu_usage_by_pod}) / ({cpu_lim_by_pod})"
+    mem_pct_req_by_pod = f"100 * ({mem_usage_by_pod}) / ({mem_req_by_pod})"
+    mem_pct_lim_by_pod = f"100 * ({mem_usage_by_pod}) / ({mem_lim_by_pod})"
+
+    pct_thresholds = [
+        {"color": "green", "value": None},
+        {"color": "yellow", "value": 70},
+        {"color": "orange", "value": 85},
+        {"color": "red", "value": 95},
+    ]
 
     panels = [
-        stat_panel(1, "Available Replicas", {"x": 0, "y": 0, "w": 6, "h": 4},
-                   f'sum(kube_deployment_status_replicas_available{{namespace="{ROBOSHOP_NS}",{dep}}})'),
-        stat_panel(2, "Desired Replicas", {"x": 6, "y": 0, "w": 6, "h": 4},
-                   f'sum(kube_deployment_spec_replicas{{namespace="{ROBOSHOP_NS}",{dep}}})'),
-        stat_panel(3, "Pod Restarts (1h)", {"x": 12, "y": 0, "w": 6, "h": 4},
-                   f'sum(increase(kube_pod_container_status_restarts_total{{namespace="{ROBOSHOP_NS}",{pod}}}[1h]))',
-                   thresholds=[{"color": "green", "value": None}, {"color": "red", "value": 1}]),
-        stat_panel(4, "Traefik req/s", {"x": 18, "y": 0, "w": 6, "h": 4},
-                   f'sum(rate(traefik_service_requests_total{{exported_service=~"default-${{deployment}}-.*"}}[5m]))', unit="reqps"),
-        ts_panel(5, "Available Replicas Over Time", {"x": 0, "y": 4, "w": 12, "h": 8},
-                 [prom_target(f'kube_deployment_status_replicas_available{{namespace="{ROBOSHOP_NS}",{dep}}}', "{{deployment}}")]),
-        ts_panel(6, "CPU Usage by Pod", {"x": 12, "y": 4, "w": 12, "h": 8},
-                 [prom_target(f'sum by (pod) (rate(container_cpu_usage_seconds_total{{namespace="{ROBOSHOP_NS}",{pod},container!="",container!="POD"}}[5m]))', "{{pod}}")]),
-        ts_panel(7, "Memory Usage by Pod", {"x": 0, "y": 12, "w": 12, "h": 8},
-                 [prom_target(f'sum by (pod) (container_memory_working_set_bytes{{namespace="{ROBOSHOP_NS}",{pod},container!="",container!="POD"}})', "{{pod}}")], unit="bytes"),
-        ts_panel(8, "Network I/O by Pod", {"x": 12, "y": 12, "w": 12, "h": 8}, [
-            prom_target(f'sum by (pod) (rate(container_network_receive_bytes_total{{namespace="{ROBOSHOP_NS}",{pod}}}[5m]))', "rx {{pod}}", ref="A"),
-            prom_target(f'sum by (pod) (rate(container_network_transmit_bytes_total{{namespace="{ROBOSHOP_NS}",{pod}}}[5m]))', "tx {{pod}}", ref="B"),
+        stat_panel(1, "Available Replicas", {"x": 0, "y": 0, "w": 4, "h": 4},
+                   f'sum(kube_deployment_status_replicas_available{{namespace="{ns}",{dep}}})'),
+        stat_panel(2, "Desired Replicas", {"x": 4, "y": 0, "w": 4, "h": 4},
+                   f'sum(kube_deployment_spec_replicas{{namespace="{ns}",{dep}}})'),
+        stat_panel(3, "CPU % of Request", {"x": 8, "y": 0, "w": 4, "h": 4},
+                   cpu_pct_req, unit="percent", decimals=1, thresholds=pct_thresholds),
+        stat_panel(4, "CPU % of Limit", {"x": 12, "y": 0, "w": 4, "h": 4},
+                   cpu_pct_lim, unit="percent", decimals=1, thresholds=pct_thresholds),
+        stat_panel(5, "Memory % of Request", {"x": 16, "y": 0, "w": 4, "h": 4},
+                   mem_pct_req, unit="percent", decimals=1, thresholds=pct_thresholds),
+        stat_panel(6, "Memory % of Limit", {"x": 20, "y": 0, "w": 4, "h": 4},
+                   mem_pct_lim, unit="percent", decimals=1, thresholds=pct_thresholds),
+
+        ts_panel(7, "CPU: Usage vs Requests vs Limits", {"x": 0, "y": 4, "w": 24, "h": 8}, [
+            prom_target(cpu_usage_sum, "usage", ref="A"),
+            prom_target(cpu_req_sum, "requests", ref="B"),
+            prom_target(cpu_lim_sum, "limits", ref="C"),
+        ]),
+        ts_panel(8, "CPU Usage by Pod", {"x": 0, "y": 12, "w": 8, "h": 8},
+                 [prom_target(cpu_usage_by_pod, "{{pod}}")]),
+        ts_panel(9, "CPU Requests by Pod", {"x": 8, "y": 12, "w": 8, "h": 8},
+                 [prom_target(cpu_req_by_pod, "{{pod}}")]),
+        ts_panel(10, "CPU Limits by Pod", {"x": 16, "y": 12, "w": 8, "h": 8},
+                  [prom_target(cpu_lim_by_pod, "{{pod}}")]),
+
+        ts_panel(11, "CPU % of Request by Pod", {"x": 0, "y": 20, "w": 12, "h": 8},
+                  [prom_target(cpu_pct_req_by_pod, "{{pod}}")], unit="percent", decimals=1),
+        ts_panel(12, "CPU % of Limit by Pod", {"x": 12, "y": 20, "w": 12, "h": 8},
+                  [prom_target(cpu_pct_lim_by_pod, "{{pod}}")], unit="percent", decimals=1),
+
+        ts_panel(13, "Memory: Usage vs Requests vs Limits", {"x": 0, "y": 28, "w": 24, "h": 8}, [
+            prom_target(mem_usage_sum, "usage", ref="A"),
+            prom_target(mem_req_sum, "requests", ref="B"),
+            prom_target(mem_lim_sum, "limits", ref="C"),
+        ], unit="bytes"),
+        ts_panel(14, "Memory Usage by Pod", {"x": 0, "y": 36, "w": 8, "h": 8},
+                  [prom_target(mem_usage_by_pod, "{{pod}}")], unit="bytes"),
+        ts_panel(15, "Memory Requests by Pod", {"x": 8, "y": 36, "w": 8, "h": 8},
+                  [prom_target(mem_req_by_pod, "{{pod}}")], unit="bytes"),
+        ts_panel(16, "Memory Limits by Pod", {"x": 16, "y": 36, "w": 8, "h": 8},
+                  [prom_target(mem_lim_by_pod, "{{pod}}")], unit="bytes"),
+
+        ts_panel(17, "Memory % of Request by Pod", {"x": 0, "y": 44, "w": 12, "h": 8},
+                  [prom_target(mem_pct_req_by_pod, "{{pod}}")], unit="percent", decimals=1),
+        ts_panel(18, "Memory % of Limit by Pod", {"x": 12, "y": 44, "w": 12, "h": 8},
+                  [prom_target(mem_pct_lim_by_pod, "{{pod}}")], unit="percent", decimals=1),
+
+        ts_panel(19, "Network I/O by Pod", {"x": 0, "y": 52, "w": 12, "h": 8}, [
+            prom_target(f'sum by (pod) (rate(container_network_receive_bytes_total{{namespace="{ns}", {pod}}}[5m]))', "rx {{pod}}", ref="A"),
+            prom_target(f'sum by (pod) (rate(container_network_transmit_bytes_total{{namespace="{ns}", {pod}}}[5m]))', "tx {{pod}}", ref="B"),
         ], unit="Bps"),
-        ts_panel(9, "Container Restarts", {"x": 0, "y": 20, "w": 12, "h": 8},
-                 [prom_target(f'sum by (pod) (kube_pod_container_status_restarts_total{{namespace="{ROBOSHOP_NS}",{pod}}})', "{{pod}}")]),
-        ts_panel(10, "Traefik Traffic (selected service)", {"x": 12, "y": 20, "w": 12, "h": 8},
+        ts_panel(20, "Container Restarts", {"x": 12, "y": 52, "w": 12, "h": 8},
+                  [prom_target(f'sum by (pod) (kube_pod_container_status_restarts_total{{namespace="{ns}", {pod}}})', "{{pod}}")]),
+
+        stat_panel(21, "Pod Restarts (1h)", {"x": 0, "y": 60, "w": 6, "h": 4},
+                   f'sum(increase(kube_pod_container_status_restarts_total{{namespace="{ns}", {pod}}}[1h]))',
+                   thresholds=[{"color": "green", "value": None}, {"color": "red", "value": 1}]),
+        stat_panel(22, "Traefik req/s", {"x": 6, "y": 60, "w": 6, "h": 4},
+                   f'sum(rate(traefik_service_requests_total{{exported_service=~"default-${{deployment}}-.*"}}[5m]))', unit="reqps"),
+        ts_panel(23, "Available Replicas Over Time", {"x": 0, "y": 64, "w": 24, "h": 6},
+                  [prom_target(f'kube_deployment_status_replicas_available{{namespace="{ns}",{dep}}}', "{{deployment}}")]),
+        ts_panel(24, "Traefik Traffic (selected service)", {"x": 0, "y": 70, "w": 12, "h": 8},
                   [prom_target(f'sum by (code, method) (rate(traefik_service_requests_total{{exported_service=~"default-${{deployment}}-.*"}}[5m]))', "{{method}} {{code}}")], unit="reqps", stack=True),
-        ts_panel(11, "Traefik P95 Latency (selected service)", {"x": 0, "y": 28, "w": 12, "h": 8},
-                 [prom_target(f'histogram_quantile(0.95, sum by (le) (rate(traefik_service_request_duration_seconds_bucket{{exported_service=~"default-${{deployment}}-.*"}}[5m])))', "p95")], unit="s"),
-        ts_panel(12, "Traefik Errors (selected service)", {"x": 12, "y": 28, "w": 12, "h": 8},
-                 [prom_target(f'sum by (code) (rate(traefik_service_requests_total{{exported_service=~"default-${{deployment}}-.*",code=~"4..|5.."}}[5m]))', "{{code}}")], unit="reqps", stack=True),
+        ts_panel(25, "Traefik P95 Latency (selected service)", {"x": 12, "y": 70, "w": 12, "h": 8},
+                  [prom_target(f'histogram_quantile(0.95, sum by (le) (rate(traefik_service_request_duration_seconds_bucket{{exported_service=~"default-${{deployment}}-.*"}}[5m])))', "p95")], unit="s"),
+        ts_panel(26, "Traefik Errors (selected service)", {"x": 0, "y": 78, "w": 24, "h": 8},
+                  [prom_target(f'sum by (code) (rate(traefik_service_requests_total{{exported_service=~"default-${{deployment}}-.*",code=~"4..|5.."}}[5m]))', "{{code}}")], unit="reqps", stack=True),
     ]
 
     variables = [
@@ -367,7 +452,10 @@ def build_roboshop_dashboard() -> dict:
         "version": 1,
         "refresh": "30s",
         "time": {"from": "now-1h", "to": "now"},
-        "description": "Roboshop microservices health. Use Roboshop Service dropdown to filter all panels.",
+        "description": (
+            "Roboshop microservices health. Use Roboshop Service dropdown to filter all panels. "
+            "CPU/Memory panels show usage vs Kubernetes requests/limits and % utilization."
+        ),
         "panels": panels,
         "templating": {"list": variables},
         "annotations": {"list": []},
