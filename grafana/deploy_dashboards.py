@@ -52,7 +52,29 @@ def prom_target(expr: str, legend: str = "", instant: bool = False, ref: str = "
     }
 
 
-def ts_panel(pid: int, title: str, grid: dict, targets: list, unit: str = "short", stack: bool = False) -> dict:
+def ts_panel(
+    pid: int,
+    title: str,
+    grid: dict,
+    targets: list,
+    unit: str = "short",
+    stack: bool = False,
+    decimals: int | None = None,
+) -> dict:
+    defaults: dict = {
+        "color": {"mode": "palette-classic"},
+        "custom": {
+            "drawStyle": "line",
+            "lineWidth": 1,
+            "fillOpacity": 15 if stack else 10,
+            "showPoints": "never",
+            "spanNulls": True,
+            "stacking": {"mode": "normal" if stack else "none", "group": "A"},
+        },
+        "unit": unit,
+    }
+    if decimals is not None:
+        defaults["decimals"] = decimals
     return {
         "id": pid,
         "type": "timeseries",
@@ -61,18 +83,7 @@ def ts_panel(pid: int, title: str, grid: dict, targets: list, unit: str = "short
         "datasource": DS,
         "pluginVersion": "11.5.0",
         "fieldConfig": {
-            "defaults": {
-                "color": {"mode": "palette-classic"},
-                "custom": {
-                    "drawStyle": "line",
-                    "lineWidth": 1,
-                    "fillOpacity": 15 if stack else 10,
-                    "showPoints": "never",
-                    "spanNulls": True,
-                    "stacking": {"mode": "normal" if stack else "none", "group": "A"},
-                },
-                "unit": unit,
-            },
+            "defaults": defaults,
             "overrides": [],
         },
         "options": {
@@ -83,8 +94,23 @@ def ts_panel(pid: int, title: str, grid: dict, targets: list, unit: str = "short
     }
 
 
-def stat_panel(pid: int, title: str, grid: dict, expr: str, unit: str = "short", thresholds: list | None = None) -> dict:
+def stat_panel(
+    pid: int,
+    title: str,
+    grid: dict,
+    expr: str,
+    unit: str = "short",
+    thresholds: list | None = None,
+    decimals: int | None = None,
+) -> dict:
     steps = thresholds or [{"color": "green", "value": None}]
+    defaults: dict = {
+        "unit": unit,
+        "thresholds": {"mode": "absolute", "steps": steps},
+        "color": {"mode": "thresholds"},
+    }
+    if decimals is not None:
+        defaults["decimals"] = decimals
     return {
         "id": pid,
         "type": "stat",
@@ -93,11 +119,7 @@ def stat_panel(pid: int, title: str, grid: dict, expr: str, unit: str = "short",
         "datasource": DS,
         "pluginVersion": "11.5.0",
         "fieldConfig": {
-            "defaults": {
-                "unit": unit,
-                "thresholds": {"mode": "absolute", "steps": steps},
-                "color": {"mode": "thresholds"},
-            },
+            "defaults": defaults,
             "overrides": [],
         },
         "options": {
@@ -119,6 +141,10 @@ def pie_panel(pid: int, title: str, grid: dict, expr: str, legend: str = "{{code
         "gridPos": grid,
         "datasource": DS,
         "pluginVersion": "11.5.0",
+        "fieldConfig": {
+            "defaults": {"unit": "none", "decimals": 0},
+            "overrides": [],
+        },
         "targets": [prom_target(expr, legend=legend, instant=True)],
         "options": {
             "legend": {"displayMode": "table", "placement": "right", "showLegend": True},
@@ -197,12 +223,14 @@ def build_traefik_dashboard() -> dict:
         stat_panel(1, "Request Rate", {"x": 0, "y": 0, "w": 4, "h": 4},
                    f"sum(rate(traefik_service_requests_total{{{svc}}}[5m]))", unit="reqps"),
         stat_panel(2, "Total Requests", {"x": 4, "y": 0, "w": 4, "h": 4},
-                   f"sum(increase(traefik_service_requests_total{{{svc}}}[$__range]))"),
+                   f"round(sum(increase(traefik_service_requests_total{{{svc}}}[$__range])))",
+                   unit="none", decimals=0),
         stat_panel(3, "Error Rate (4xx/5xx)", {"x": 8, "y": 0, "w": 4, "h": 4},
                    f'sum(rate(traefik_service_requests_total{{{svc},code=~"4..|5.."}}[5m]))', unit="reqps",
                    thresholds=[{"color": "green", "value": None}, {"color": "yellow", "value": 1}, {"color": "red", "value": 10}]),
         stat_panel(4, "Total Errors", {"x": 12, "y": 0, "w": 4, "h": 4},
-                   f'sum(increase(traefik_service_requests_total{{{svc},code=~"4..|5.."}}[$__range]))',
+                   f'round(sum(increase(traefik_service_requests_total{{{svc},code=~"4..|5.."}}[$__range])))',
+                   unit="none", decimals=0,
                    thresholds=[{"color": "green", "value": None}, {"color": "yellow", "value": 1}, {"color": "red", "value": 10}]),
         stat_panel(5, "P95 Latency", {"x": 16, "y": 0, "w": 4, "h": 4},
                    f"histogram_quantile(0.95, sum by (le) (rate(traefik_service_request_duration_seconds_bucket{{{svc}}}[5m])))", unit="s"),
@@ -211,11 +239,13 @@ def build_traefik_dashboard() -> dict:
         ts_panel(7, "Request Rate Over Time", {"x": 0, "y": 4, "w": 12, "h": 8},
                  [prom_target(f"sum(rate(traefik_service_requests_total{{{svc}}}[5m]))", "req/s")], unit="reqps"),
         ts_panel(8, "Request Count Over Time", {"x": 12, "y": 4, "w": 12, "h": 8},
-                 [prom_target(f"sum(increase(traefik_service_requests_total{{{svc}}}[5m]))", "requests / 5m")]),
+                 [prom_target(f"round(sum(increase(traefik_service_requests_total{{{svc}}}[5m])))", "requests / 5m")],
+                 unit="none", decimals=0),
         ts_panel(9, "Request Rate by Status Code", {"x": 0, "y": 12, "w": 12, "h": 8},
                  [prom_target(f"sum by (code) (rate(traefik_service_requests_total{{{svc}}}[5m]))", "{{code}}")], unit="reqps", stack=True),
         ts_panel(10, "Request Count by Status Code", {"x": 12, "y": 12, "w": 12, "h": 8},
-                  [prom_target(f"sum by (code) (increase(traefik_service_requests_total{{{svc}}}[5m]))", "{{code}}")], stack=True),
+                  [prom_target(f"round(sum by (code) (increase(traefik_service_requests_total{{{svc}}}[5m])))", "{{code}}")],
+                  unit="none", decimals=0, stack=True),
         ts_panel(11, "Latency Percentiles", {"x": 0, "y": 20, "w": 12, "h": 8}, [
             prom_target(f"histogram_quantile(0.50, sum by (le) (rate(traefik_service_request_duration_seconds_bucket{{{svc}}}[5m])))", "p50", ref="A"),
             prom_target(f"histogram_quantile(0.95, sum by (le) (rate(traefik_service_request_duration_seconds_bucket{{{svc}}}[5m])))", "p95", ref="B"),
@@ -228,9 +258,10 @@ def build_traefik_dashboard() -> dict:
         ts_panel(13, "Error Rate Over Time", {"x": 0, "y": 28, "w": 12, "h": 8},
                  [prom_target(f'sum by (code) (rate(traefik_service_requests_total{{{svc},code=~"4..|5.."}}[5m]))', "{{code}}")], unit="reqps", stack=True),
         ts_panel(14, "Error Count Over Time", {"x": 12, "y": 28, "w": 12, "h": 8},
-                  [prom_target(f'sum by (code) (increase(traefik_service_requests_total{{{svc},code=~"4..|5.."}}[5m]))', "{{code}}")], stack=True),
+                  [prom_target(f'round(sum by (code) (increase(traefik_service_requests_total{{{svc},code=~"4..|5.."}}[5m])))', "{{code}}")],
+                  unit="none", decimals=0, stack=True),
         pie_panel(15, "Status Code Distribution", {"x": 0, "y": 36, "w": 12, "h": 8},
-                  f"sum by (code) (increase(traefik_service_requests_total{{{svc}}}[$__range]))", legend="{{code}}"),
+                  f"round(sum by (code) (increase(traefik_service_requests_total{{{svc}}}[$__range])))", legend="{{code}}"),
         ts_panel(16, "Entrypoint Request Rate", {"x": 12, "y": 36, "w": 12, "h": 8},
                  [prom_target(f"sum by (entrypoint) (rate(traefik_entrypoint_requests_total{{{ep}}}[5m]))", "{{entrypoint}}")], unit="reqps"),
         ts_panel(17, "Entrypoint P95 Latency", {"x": 0, "y": 44, "w": 12, "h": 8},
