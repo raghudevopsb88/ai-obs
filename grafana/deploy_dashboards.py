@@ -52,6 +52,49 @@ def prom_target(expr: str, legend: str = "", instant: bool = False, ref: str = "
     }
 
 
+def usage_vs_quota_panel(
+    pid: int,
+    title: str,
+    grid: dict,
+    usage_expr: str,
+    req_expr: str,
+    lim_expr: str,
+    unit: str = "short",
+) -> dict:
+    """Usage is dynamic; requests/limits are instant scalars drawn as flat reference lines."""
+    panel = ts_panel(
+        pid,
+        title,
+        grid,
+        [
+            prom_target(usage_expr, "usage", ref="A"),
+            prom_target(f"scalar({req_expr})", "requests", ref="B", instant=True),
+            prom_target(f"scalar({lim_expr})", "limits", ref="C", instant=True),
+        ],
+        unit=unit,
+    )
+    overrides = [
+        {
+            "matcher": {"id": "byName", "options": "requests"},
+            "properties": [
+                {"id": "custom.lineStyle", "value": {"fill": "dash", "dash": [10, 10]}},
+                {"id": "custom.lineWidth", "value": 2},
+                {"id": "color", "value": {"fixedColor": "orange", "mode": "fixed"}},
+            ],
+        },
+        {
+            "matcher": {"id": "byName", "options": "limits"},
+            "properties": [
+                {"id": "custom.lineStyle", "value": {"fill": "dash", "dash": [10, 10]}},
+                {"id": "custom.lineWidth", "value": 2},
+                {"id": "color", "value": {"fixedColor": "red", "mode": "fixed"}},
+            ],
+        },
+    ]
+    panel["fieldConfig"]["overrides"] = overrides
+    return panel
+
+
 def ts_panel(
     pid: int,
     title: str,
@@ -378,34 +421,32 @@ def build_roboshop_dashboard() -> dict:
         stat_panel(6, "Memory % of Limit", {"x": 20, "y": 0, "w": 4, "h": 4},
                    mem_pct_lim, unit="percent", decimals=1, thresholds=pct_thresholds),
 
-        ts_panel(7, "CPU: Usage vs Requests vs Limits", {"x": 0, "y": 4, "w": 24, "h": 8}, [
-            prom_target(cpu_usage_sum, "usage", ref="A"),
-            prom_target(cpu_req_sum, "requests", ref="B"),
-            prom_target(cpu_lim_sum, "limits", ref="C"),
-        ]),
-        ts_panel(8, "CPU Usage by Pod", {"x": 0, "y": 12, "w": 8, "h": 8},
+        usage_vs_quota_panel(
+            7, "CPU: Usage vs Requests vs Limits", {"x": 0, "y": 4, "w": 24, "h": 8},
+            cpu_usage_sum, cpu_req_sum, cpu_lim_sum,
+        ),
+        ts_panel(8, "CPU Usage by Pod", {"x": 0, "y": 12, "w": 12, "h": 8},
                  [prom_target(cpu_usage_by_pod, "{{pod}}")]),
-        ts_panel(9, "CPU Requests by Pod", {"x": 8, "y": 12, "w": 8, "h": 8},
-                 [prom_target(cpu_req_by_pod, "{{pod}}")]),
-        ts_panel(10, "CPU Limits by Pod", {"x": 16, "y": 12, "w": 8, "h": 8},
-                  [prom_target(cpu_lim_by_pod, "{{pod}}")]),
+        ts_panel(9, "CPU Requests & Limits by Pod (static)", {"x": 12, "y": 12, "w": 12, "h": 8}, [
+            prom_target(cpu_req_by_pod, "{{pod}} request", instant=True),
+            prom_target(cpu_lim_by_pod, "{{pod}} limit", instant=True),
+        ]),
 
         ts_panel(11, "CPU % of Request by Pod", {"x": 0, "y": 20, "w": 12, "h": 8},
                   [prom_target(cpu_pct_req_by_pod, "{{pod}}")], unit="percent", decimals=1),
         ts_panel(12, "CPU % of Limit by Pod", {"x": 12, "y": 20, "w": 12, "h": 8},
                   [prom_target(cpu_pct_lim_by_pod, "{{pod}}")], unit="percent", decimals=1),
 
-        ts_panel(13, "Memory: Usage vs Requests vs Limits", {"x": 0, "y": 28, "w": 24, "h": 8}, [
-            prom_target(mem_usage_sum, "usage", ref="A"),
-            prom_target(mem_req_sum, "requests", ref="B"),
-            prom_target(mem_lim_sum, "limits", ref="C"),
-        ], unit="bytes"),
-        ts_panel(14, "Memory Usage by Pod", {"x": 0, "y": 36, "w": 8, "h": 8},
+        usage_vs_quota_panel(
+            13, "Memory: Usage vs Requests vs Limits", {"x": 0, "y": 28, "w": 24, "h": 8},
+            mem_usage_sum, mem_req_sum, mem_lim_sum, unit="bytes",
+        ),
+        ts_panel(14, "Memory Usage by Pod", {"x": 0, "y": 36, "w": 12, "h": 8},
                   [prom_target(mem_usage_by_pod, "{{pod}}")], unit="bytes"),
-        ts_panel(15, "Memory Requests by Pod", {"x": 8, "y": 36, "w": 8, "h": 8},
-                  [prom_target(mem_req_by_pod, "{{pod}}")], unit="bytes"),
-        ts_panel(16, "Memory Limits by Pod", {"x": 16, "y": 36, "w": 8, "h": 8},
-                  [prom_target(mem_lim_by_pod, "{{pod}}")], unit="bytes"),
+        ts_panel(15, "Memory Requests & Limits by Pod (static)", {"x": 12, "y": 36, "w": 12, "h": 8}, [
+            prom_target(mem_req_by_pod, "{{pod}} request", instant=True),
+            prom_target(mem_lim_by_pod, "{{pod}} limit", instant=True),
+        ], unit="bytes"),
 
         ts_panel(17, "Memory % of Request by Pod", {"x": 0, "y": 44, "w": 12, "h": 8},
                   [prom_target(mem_pct_req_by_pod, "{{pod}}")], unit="percent", decimals=1),
