@@ -54,8 +54,8 @@ def prom_target(expr: str, legend: str = "", instant: bool = False, ref: str = "
 
 
 def _quota_line_overrides() -> list:
-    """Style request (B) and limit (C) query lines as dashed reference thresholds."""
-    base = [
+    """Style request (B) and limit (C) reference lines; force same unit on usage (A)."""
+    line = [
         {"id": "custom.lineStyle", "value": {"fill": "dash", "dash": [10, 10]}},
         {"id": "custom.lineWidth", "value": 3},
         {"id": "custom.showPoints", "value": "never"},
@@ -63,18 +63,37 @@ def _quota_line_overrides() -> list:
     ]
     return [
         {
+            "matcher": {"id": "byFrameRefID", "options": "A"},
+            "properties": [
+                {"id": "unit", "value": "percent"},
+                {"id": "decimals", "value": 1},
+                {"id": "custom.drawStyle", "value": "line"},
+                {"id": "custom.lineWidth", "value": 1},
+            ],
+        },
+        {
             "matcher": {"id": "byFrameRefID", "options": "B"},
-            "properties": base + [{"id": "color", "value": {"fixedColor": "orange", "mode": "fixed"}}],
+            "properties": line
+            + [
+                {"id": "unit", "value": "percent"},
+                {"id": "decimals", "value": 0},
+                {"id": "color", "value": {"fixedColor": "orange", "mode": "fixed"}},
+            ],
         },
         {
             "matcher": {"id": "byFrameRefID", "options": "C"},
-            "properties": base + [{"id": "color", "value": {"fixedColor": "red", "mode": "fixed"}}],
+            "properties": line
+            + [
+                {"id": "unit", "value": "percent"},
+                {"id": "decimals", "value": 0},
+                {"id": "color", "value": {"fixedColor": "red", "mode": "fixed"}},
+            ],
         },
     ]
 
 
 def _cpu_quota_panel(pid: int, title: str, grid: dict, targets: list) -> dict:
-    panel = ts_panel(pid, title, grid, targets, unit="none", decimals=0)
+    panel = ts_panel(pid, title, grid, targets, unit="percent", decimals=1)
     panel["fieldConfig"]["defaults"]["custom"]["axisSoftMin"] = 0
     panel["fieldConfig"]["overrides"] = _quota_line_overrides()
     panel["options"]["legend"]["calcs"] = ["lastNotNull"]
@@ -82,7 +101,7 @@ def _cpu_quota_panel(pid: int, title: str, grid: dict, targets: list) -> dict:
 
 
 def _mem_quota_panel(pid: int, title: str, grid: dict, targets: list) -> dict:
-    panel = ts_panel(pid, title, grid, targets, unit="none", decimals=0)
+    panel = ts_panel(pid, title, grid, targets, unit="percent", decimals=1)
     panel["fieldConfig"]["defaults"]["custom"]["axisSoftMin"] = 0
     panel["fieldConfig"]["overrides"] = _quota_line_overrides()
     panel["options"]["legend"]["calcs"] = ["lastNotNull"]
@@ -369,16 +388,17 @@ def build_roboshop_dashboard() -> dict:
     )
     cpu_req_by_pod = f'sum by (pod) ({res_cpu}) * 1000'
     cpu_lim_by_pod = f'sum by (pod) ({lim_cpu}) * 1000'
-    cpu_req_line = f'max({res_cpu}) * 1000'
-    cpu_lim_line = f'max({lim_cpu}) * 1000'
+    # Flat reference lines on a % of request axis (usage in cpu_pct_req_by_pod)
+    cpu_req_pct_line = f'((max({res_cpu}) * 1000) * 0) + 100'
+    cpu_lim_pct_line = f'100 * (max({lim_cpu})) / (max({res_cpu}))'
 
     mem_usage_by_pod = (
         f'sum by (pod) (container_memory_working_set_bytes{{namespace="{ns}", {pod}, {ctr}}}) / 1024 / 1024'
     )
     mem_req_by_pod = f'sum by (pod) ({res_mem}) / 1024 / 1024'
     mem_lim_by_pod = f'sum by (pod) ({lim_mem}) / 1024 / 1024'
-    mem_req_line = f'max({res_mem}) / 1024 / 1024'
-    mem_lim_line = f'max({lim_mem}) / 1024 / 1024'
+    mem_req_pct_line = f'((max({res_mem}) / 1024 / 1024) * 0) + 100'
+    mem_lim_pct_line = f'100 * (max({lim_mem})) / (max({res_mem}))'
 
     cpu_usage_sum = f'sum(rate(container_cpu_usage_seconds_total{{namespace="{ns}", {pod}, {ctr}}}[5m]))'
     cpu_req_sum = f'sum({res_cpu})'
@@ -397,16 +417,16 @@ def build_roboshop_dashboard() -> dict:
     mem_pct_req_by_pod = f"100 * ({mem_usage_by_pod}) / ({mem_req_by_pod})"
     mem_pct_lim_by_pod = f"100 * ({mem_usage_by_pod}) / ({mem_lim_by_pod})"
 
-    # Range queries on gauge metrics = flat horizontal lines (scalar/instant breaks in Grafana 13)
+    # Same unit on one axis: usage/limit/request all as % of request (request line = 100%)
     cpu_quota_targets = [
-        prom_target(cpu_usage_by_pod, "{{pod}} usage", ref="A"),
-        prom_target(cpu_req_line, "request (per pod)", ref="B"),
-        prom_target(cpu_lim_line, "limit (per pod)", ref="C"),
+        prom_target(cpu_pct_req_by_pod, "{{pod}} % of request", ref="A"),
+        prom_target(cpu_req_pct_line, "request (100%)", ref="B"),
+        prom_target(cpu_lim_pct_line, "limit (% of request)", ref="C"),
     ]
     mem_quota_targets = [
-        prom_target(mem_usage_by_pod, "{{pod}} usage", ref="A"),
-        prom_target(mem_req_line, "request (per pod)", ref="B"),
-        prom_target(mem_lim_line, "limit (per pod)", ref="C"),
+        prom_target(mem_pct_req_by_pod, "{{pod}} % of request", ref="A"),
+        prom_target(mem_req_pct_line, "request (100%)", ref="B"),
+        prom_target(mem_lim_pct_line, "limit (% of request)", ref="C"),
     ]
 
     pct_thresholds = [
@@ -430,7 +450,7 @@ def build_roboshop_dashboard() -> dict:
         stat_panel(6, "Memory % of Limit", {"x": 20, "y": 0, "w": 4, "h": 4},
                    mem_pct_lim, unit="percent", decimals=1, thresholds=pct_thresholds),
 
-        _cpu_quota_panel(7, "CPU: Usage vs Requests vs Limits (millicores)", {"x": 0, "y": 4, "w": 24, "h": 8}, cpu_quota_targets),
+        _cpu_quota_panel(7, "CPU: Usage vs Request vs Limit (% of request)", {"x": 0, "y": 4, "w": 24, "h": 8}, cpu_quota_targets),
         ts_panel(8, "CPU Usage by Pod (millicores)", {"x": 0, "y": 12, "w": 12, "h": 8},
                  [prom_target(cpu_usage_by_pod, "{{pod}}")], decimals=0),
         ts_panel(9, "CPU Requests & Limits by Pod (static, millicores)", {"x": 12, "y": 12, "w": 12, "h": 8}, [
@@ -443,7 +463,7 @@ def build_roboshop_dashboard() -> dict:
         ts_panel(12, "CPU % of Limit by Pod", {"x": 12, "y": 20, "w": 12, "h": 8},
                   [prom_target(cpu_pct_lim_by_pod, "{{pod}}")], unit="percent", decimals=1),
 
-        _mem_quota_panel(13, "Memory: Usage vs Requests vs Limits (MiB)", {"x": 0, "y": 28, "w": 24, "h": 8}, mem_quota_targets),
+        _mem_quota_panel(13, "Memory: Usage vs Request vs Limit (% of request)", {"x": 0, "y": 28, "w": 24, "h": 8}, mem_quota_targets),
         ts_panel(14, "Memory Usage by Pod (MiB)", {"x": 0, "y": 36, "w": 12, "h": 8},
                   [prom_target(mem_usage_by_pod, "{{pod}}")], unit="none", decimals=0),
         ts_panel(15, "Memory Requests & Limits by Pod (static, MiB)", {"x": 12, "y": 36, "w": 12, "h": 8}, [
