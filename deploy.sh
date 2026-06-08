@@ -101,10 +101,24 @@ export GRAFANA_ALERT_EMAIL="${GRAFANA_ALERT_EMAIL:-}"
 export GRAFANA_SMTP_FROM="${GRAFANA_SMTP_FROM:-}"
 export GRAFANA_SMTP_FROM_NAME="${GRAFANA_SMTP_FROM_NAME:-Roboshop Observability}"
 export GRAFANA_DEPLOYMENT="${GRAFANA_DEPLOYMENT:-kube-prometheus-stack-grafana}"
+export MONITORING_NAMESPACE
+export GRAFANA_SMTP_HOST="${GRAFANA_SMTP_HOST:-}"
+export GRAFANA_SMTP_USER="${GRAFANA_SMTP_USER:-}"
+export GRAFANA_SMTP_PASSWORD="${GRAFANA_SMTP_PASSWORD:-}"
 
-if [[ -n "${GRAFANA_SMTP_HOST:-}" ]]; then
+smtp_ready() {
+  [[ -n "${GRAFANA_SMTP_HOST}" && -n "${GRAFANA_SMTP_USER}" && -n "${GRAFANA_SMTP_PASSWORD}" && -n "${GRAFANA_SMTP_FROM}" ]]
+}
+
+if smtp_ready; then
   echo "Step 4/6: Configure Grafana SMTP (AWS SES)"
   bash scripts/configure_grafana_smtp.sh
+elif [[ -n "${GRAFANA_SMTP_HOST}" || -n "${GRAFANA_SMTP_USER}" || -n "${GRAFANA_SMTP_PASSWORD}" ]]; then
+  echo "Step 4/6: Skipping Grafana SMTP — incomplete config.env (need HOST, USER, PASSWORD, and FROM)" >&2
+  echo "  GRAFANA_SMTP_HOST=${GRAFANA_SMTP_HOST:-<empty>}" >&2
+  echo "  GRAFANA_SMTP_USER=${GRAFANA_SMTP_USER:+<set>}${GRAFANA_SMTP_USER:-<empty>}" >&2
+  echo "  GRAFANA_SMTP_PASSWORD=${GRAFANA_SMTP_PASSWORD:+<set>}${GRAFANA_SMTP_PASSWORD:-<empty>}" >&2
+  echo "  GRAFANA_SMTP_FROM=${GRAFANA_SMTP_FROM:-<empty>}" >&2
 else
   echo "Step 4/6: Skipping Grafana SMTP (set GRAFANA_SMTP_* in config.env for email alerts)"
 fi

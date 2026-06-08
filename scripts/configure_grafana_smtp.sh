@@ -2,6 +2,12 @@
 # Configure kube-prometheus-stack Grafana to send mail via SMTP (e.g. AWS SES).
 set -euo pipefail
 
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+if [[ -f "${ROOT_DIR}/config.env" ]]; then
+  # shellcheck disable=SC1091
+  source "${ROOT_DIR}/config.env"
+fi
+
 NS="${MONITORING_NAMESPACE:-monitoring}"
 DEPLOY="${GRAFANA_DEPLOYMENT:-kube-prometheus-stack-grafana}"
 SECRET="${GRAFANA_SMTP_SECRET:-grafana-smtp-config}"
