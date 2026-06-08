@@ -27,6 +27,7 @@ CPU_LIMIT_PCT = float(os.environ.get("ALERT_CPU_LIMIT_PCT", "85"))
 MEM_LIMIT_PCT = float(os.environ.get("ALERT_MEM_LIMIT_PCT", "85"))
 LATENCY_P95_SEC = float(os.environ.get("ALERT_LATENCY_P95_SEC", "2"))
 ERROR_RATE_MIN = float(os.environ.get("ALERT_ERROR_RATE_MIN", "0.001"))
+TRAEFIK_ERROR_FOR = os.environ.get("ALERT_TRAEFIK_ERROR_FOR", "1m")
 RULE_INTERVAL = int(os.environ.get("ALERT_RULE_INTERVAL", "60"))
 
 CTX = ssl.create_default_context()
@@ -237,13 +238,13 @@ def build_traefik_rules() -> list[dict]:
             "Traefik ingress errors (4xx/5xx)",
             err_rate,
             ERROR_RATE_MIN,
-            for_duration="2m",
+            for_duration=TRAEFIK_ERROR_FOR,
             severity="warning",
             dashboard_uid="traefik-overview",
             panel_id=13,
             summary="Traefik is returning HTTP 4xx/5xx responses",
             description=(
-                "Ingress error rate is above zero for at least 2 minutes. "
+                f"Ingress error rate is above zero for at least {TRAEFIK_ERROR_FOR}. "
                 "Check Traefik - Ingress Overview dashboard, Error Rate / Error Count panels."
             ),
         ),
