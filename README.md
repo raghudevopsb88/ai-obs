@@ -111,6 +111,7 @@ Copy `config.env.example` to `config.env`:
 | `GRAFANA_SMTP_FROM` | `raghudevops88@gmail.com` | Verified SES sender / From address |
 | `GRAFANA_ALERT_EMAIL` | `raghudevops88@gmail.com` | Alert notification recipient |
 | `GRAFANA_DEPLOYMENT` | `kube-prometheus-stack-grafana` | Grafana Deployment name in cluster |
+| `GRAFANA_CONTAINER` | `grafana` | Grafana server container (not the sidecar) |
 
 ## Daily / cluster recreate workflow
 

@@ -32,7 +32,14 @@ if ! kubectl get deployment "$DEPLOY" -n "$NS" >/dev/null 2>&1; then
   exit 1
 fi
 
-CONTAINER="$(kubectl get deployment "$DEPLOY" -n "$NS" -o jsonpath='{.spec.template.spec.containers[0].name}')"
+CONTAINER="${GRAFANA_CONTAINER:-grafana}"
+if ! kubectl get deployment "$DEPLOY" -n "$NS" \
+  -o "jsonpath={.spec.template.spec.containers[?(@.name=='${CONTAINER}')].name}" | grep -qx "$CONTAINER"; then
+  echo "Container '${CONTAINER}' not found in deployment/${DEPLOY}. Available containers:" >&2
+  kubectl get deployment "$DEPLOY" -n "$NS" \
+    -o jsonpath='{range .spec.template.spec.containers[*]}{.name}{"\n"}{end}' >&2
+  exit 1
+fi
 
 echo "Configuring Grafana SMTP on deployment/${DEPLOY} (container: ${CONTAINER})"
 

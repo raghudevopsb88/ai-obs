@@ -183,21 +183,24 @@ def ensure_email_contact_point() -> None:
     if not ALERT_EMAIL:
         print("  (skip email: set GRAFANA_ALERT_EMAIL in config.env)")
         return
-    api(
-        "PUT",
-        f"/api/v1/provisioning/contact-points/{CONTACT_UID}",
-        {
-            "uid": CONTACT_UID,
-            "name": CONTACT_UID,
-            "type": "email",
-            "settings": {
-                "addresses": ALERT_EMAIL,
-                "singleEmail": False,
-            },
-            "disableResolveMessage": False,
+    payload = {
+        "uid": CONTACT_UID,
+        "name": CONTACT_UID,
+        "type": "email",
+        "settings": {
+            "addresses": ALERT_EMAIL,
+            "singleEmail": False,
         },
-        extra_headers={"X-Disable-Provenance": "true"},
-    )
+        "disableResolveMessage": False,
+    }
+    headers = {"X-Disable-Provenance": "true"}
+    path = f"/api/v1/provisioning/contact-points/{CONTACT_UID}"
+    try:
+        api("PUT", path, payload, extra_headers=headers)
+    except RuntimeError as exc:
+        if "404" not in str(exc):
+            raise
+        api("POST", "/api/v1/provisioning/contact-points", payload, extra_headers=headers)
     print(f"  contact point → {ALERT_EMAIL}")
 
 
