@@ -75,14 +75,14 @@ require_cmd kubectl
 require_cmd python3
 require_cmd curl
 
-echo "Step 1/4: Apply Kubernetes monitoring manifests"
+echo "Step 1/6: Apply Kubernetes monitoring manifests"
 kubectl apply -f kubernetes/monitoring/traefik-metrics-service.yaml
 kubectl apply -f kubernetes/monitoring/traefik-servicemonitor.yaml
 
-echo "Step 2/4: Wait for Prometheus to scrape Traefik"
+echo "Step 2/6: Wait for Prometheus to scrape Traefik"
 wait_for_traefik_metrics
 
-echo "Step 3/4: Resolve Grafana credentials"
+echo "Step 3/6: Resolve Grafana credentials"
 if [[ -z "${GRAFANA_PASSWORD:-}" ]]; then
   GRAFANA_PASSWORD="$(kubectl get secret -n "$MONITORING_NAMESPACE" "$GRAFANA_SECRET" -o jsonpath='{.data.admin-password}' | base64 -d)"
 fi
@@ -92,8 +92,24 @@ export PROMETHEUS_DS_UID="${PROMETHEUS_DS_UID:-prometheus}"
 export GRAFANA_FOLDER_UID="${GRAFANA_FOLDER_UID:-roboshop-obs}"
 export GRAFANA_FOLDER_TITLE="${GRAFANA_FOLDER_TITLE:-Roboshop Observability}"
 export ROBOSHOP_NAMESPACE="${ROBOSHOP_NAMESPACE:-default}"
+export ALERT_CPU_LIMIT_PCT="${ALERT_CPU_LIMIT_PCT:-85}"
+export ALERT_MEM_LIMIT_PCT="${ALERT_MEM_LIMIT_PCT:-85}"
+export ALERT_LATENCY_P95_SEC="${ALERT_LATENCY_P95_SEC:-2}"
+export ALERT_ERROR_RATE_MIN="${ALERT_ERROR_RATE_MIN:-0.001}"
+export ALERT_RULE_INTERVAL="${ALERT_RULE_INTERVAL:-60}"
+export GRAFANA_ALERT_EMAIL="${GRAFANA_ALERT_EMAIL:-}"
+export GRAFANA_SMTP_FROM="${GRAFANA_SMTP_FROM:-}"
+export GRAFANA_SMTP_FROM_NAME="${GRAFANA_SMTP_FROM_NAME:-Roboshop Observability}"
+export GRAFANA_DEPLOYMENT="${GRAFANA_DEPLOYMENT:-kube-prometheus-stack-grafana}"
 
-echo "Step 4/4: Deploy Grafana dashboards"
+if [[ -n "${GRAFANA_SMTP_HOST:-}" ]]; then
+  echo "Step 4/6: Configure Grafana SMTP (AWS SES)"
+  bash scripts/configure_grafana_smtp.sh
+else
+  echo "Step 4/6: Skipping Grafana SMTP (set GRAFANA_SMTP_* in config.env for email alerts)"
+fi
+
+echo "Step 5/6: Deploy Grafana dashboards"
 if [[ -z "$GRAFANA_URL" ]]; then
   kubectl port-forward -n "$MONITORING_NAMESPACE" "svc/$GRAFANA_SERVICE" 3000:80 >/dev/null 2>&1 &
   PORT_FORWARD_PID=$!
@@ -101,13 +117,26 @@ if [[ -z "$GRAFANA_URL" ]]; then
   sleep 3
 fi
 
+if [[ -z "${GRAFANA_ALERT_EMAIL:-}" && -n "${GRAFANA_SMTP_FROM:-}" ]]; then
+  export GRAFANA_ALERT_EMAIL="$GRAFANA_SMTP_FROM"
+fi
+
 wait_for_grafana "$GRAFANA_URL"
 python3 grafana/deploy_dashboards.py
+
+echo "Step 6/6: Deploy Grafana alert rules and email routing"
+python3 grafana/deploy_alerts.py
 
 echo ""
 echo "Dashboards deployed to folder: ${GRAFANA_FOLDER_TITLE}"
 echo "  /d/traefik-overview/traefik-ingress-overview"
 echo "  /d/roboshop-cluster/roboshop-cluster-health"
+echo "Alert rules: Grafana → Alerting → Alert rules (folder: ${GRAFANA_FOLDER_TITLE})"
+if [[ -n "${GRAFANA_ALERT_EMAIL:-}" && -n "${GRAFANA_SMTP_HOST:-}" ]]; then
+  echo "Alert emails → ${GRAFANA_ALERT_EMAIL} (via ${GRAFANA_SMTP_FROM})"
+elif [[ -n "${GRAFANA_ALERT_EMAIL:-}" ]]; then
+  echo "Warning: GRAFANA_ALERT_EMAIL is set but GRAFANA_SMTP_HOST is not — emails will not send until SMTP is configured."
+fi
 if [[ -z "${GRAFANA_URL:-}" || "$GRAFANA_URL" == "http://127.0.0.1:3000" ]]; then
   echo ""
   echo "Tip: set GRAFANA_URL in config.env to your ingress URL to skip port-forward."
